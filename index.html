@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Grid Capacity Monitor</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/papaparse/5.4.1/papaparse.min.js"></script>
+<style>
+  :root{
+    --bg: #000F35;
+    --panel: #061542;
+    --panel-hi: #0B1B4E;
+    --border: #263B72;
+    --amber: #D0FF00;
+    --cyan: #B00FFF;
+    --green: #D0FF00;
+    --text: #CCCFFF;
+    --muted: #888DDD;
+    --purple: #700EEE;
+    --mono: 'IBM Plex Mono', ui-monospace, monospace;
+  }
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:'IBM Plex Sans', sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1200px;margin:0 auto;padding:28px 24px 60px;}
+
+  /* header */
+  header{
+    display:flex;justify-content:space-between;align-items:flex-start;
+    padding-bottom:20px;border-bottom:1px solid var(--border);margin-bottom:24px;
+    flex-wrap:wrap;gap:16px;
+  }
+  .title-block h1{
+    font-family:'Space Grotesk',sans-serif;
+    font-size:26px;font-weight:700;margin:0 0 4px;letter-spacing:0.3px;
+  }
+  .title-block .sub{color:var(--muted);font-size:13px;font-family:var(--mono);}
+  .live{
+    display:inline-flex;align-items:center;gap:7px;
+    font-family:var(--mono);font-size:12px;color:var(--green);
+    border:1px solid rgba(208,255,0,0.35);background:rgba(208,255,0,0.08);
+    padding:5px 10px;border-radius:20px;
+  }
+  .live .dot{width:7px;height:7px;border-radius:50%;background:var(--green);
+    box-shadow:0 0 0 0 rgba(208,255,0,0.6);animation:pulse 1.8s infinite;}
+  @keyframes pulse{
+    0%{box-shadow:0 0 0 0 rgba(208,255,0,0.55);}
+    70%{box-shadow:0 0 0 7px rgba(208,255,0,0);}
+    100%{box-shadow:0 0 0 0 rgba(208,255,0,0);}
+  }
+  .asof{color:var(--muted);font-size:12px;font-family:var(--mono);margin-top:8px;text-align:right;}
+  .live.err{color:var(--cyan);border-color:rgba(176,15,255,0.4);background:rgba(176,15,255,0.08);}
+  .live.err .dot{background:var(--cyan);box-shadow:none;animation:none;}
+  .refresh-btn{cursor:pointer;color:var(--muted);text-decoration:underline dotted;}
+  .refresh-btn:hover{color:var(--text);}
+
+  /* month chips */
+  .chips{display:flex;gap:8px;margin-bottom:24px;flex-wrap:wrap;}
+  .chip{
+    font-family:var(--mono);font-size:12.5px;padding:7px 14px;border-radius:7px;
+    border:1px solid var(--border);background:var(--panel);color:var(--muted);
+    cursor:pointer;transition:.15s;user-select:none;
+  }
+  .chip:hover{color:var(--text);border-color:#33424d;}
+  .chip.active{background:rgba(242,169,59,0.12);border-color:var(--amber);color:var(--amber);}
+
+  /* KPI row */
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px;}
+  .kpi{
+    background:var(--panel);border:1px solid var(--border);border-radius:10px;
+    padding:18px 18px 16px;position:relative;overflow:hidden;
+  }
+  .kpi::before{
+    content:"";position:absolute;top:0;left:0;width:3px;height:100%;background:var(--amber);
+  }
+  .kpi.cyan::before{background:var(--purple);}
+  .kpi.green::before{background:var(--cyan);}
+  .kpi .label{color:var(--muted);font-size:11.5px;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:10px;}
+  .kpi .value{font-family:var(--mono);font-size:28px;font-weight:600;line-height:1;}
+  .kpi .value span{font-size:14px;color:var(--muted);font-weight:400;margin-left:4px;}
+  .kpi .delta{font-family:var(--mono);font-size:12px;margin-top:8px;color:var(--green);}
+  .kpi .delta.neg{color:#B00FFF;}
+
+  /* panels */
+  .panels{display:grid;grid-template-columns:1.3fr 1fr;gap:16px;margin-bottom:24px;}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px 18px 8px;}
+  .panel h2{
+    font-family:'Space Grotesk',sans-serif;font-size:14px;margin:0 0 14px;
+    color:var(--text);font-weight:600;
+  }
+  .panel h2 .tag{color:var(--muted);font-weight:400;font-size:12px;margin-left:6px;}
+  canvas{max-height:280px;}
+
+  /* table */
+  .table-panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  thead th{
+    text-align:left;color:var(--muted);font-weight:500;font-size:11px;text-transform:uppercase;
+    letter-spacing:.6px;padding:0 10px 10px;border-bottom:1px solid var(--border);
+  }
+  thead th.num, tbody td.num{text-align:right;}
+  tbody td{padding:10px 10px;border-bottom:1px solid rgba(30,40,48,0.6);font-family:var(--mono);}
+  tbody td.state{font-family:'IBM Plex Sans';font-weight:500;}
+  tbody tr:hover{background:var(--panel-hi);}
+  tbody tr.total td{font-weight:600;color:var(--amber);border-top:1px solid var(--border);border-bottom:none;}
+  .bar-cell{display:flex;align-items:center;gap:8px;}
+  .bar-track{flex:1;height:6px;background:#182028;border-radius:4px;overflow:hidden;}
+  .bar-fill{height:100%;background:linear-gradient(90deg,var(--purple),var(--amber));border-radius:4px;}
+
+  footer{margin-top:26px;color:var(--muted);font-size:12px;font-family:var(--mono);text-align:center;}
+
+  @media (max-width:820px){
+    .kpis{grid-template-columns:repeat(2,1fr);}
+    .panels{grid-template-columns:1fr;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="title-block">
+      <h1>Grid Capacity Monitor</h1>
+      <div class="sub">F&amp;S_PORTFOLIO &middot; State-wise MW &amp; substation count</div>
+    </div>
+    <div>
+      <div class="live" id="liveBadge"><span class="dot"></span><span id="liveLabel">SYNCING&hellip;</span></div>
+      <div class="asof" id="asOf">last synced: &mdash;</div>
+      <div class="asof" style="margin-top:6px;"><span class="refresh-btn" id="refreshBtn">&#x21bb; refresh now</span></div>
+    </div>
+  </header>
+
+  <div class="chips" id="monthChips"></div>
+
+  <div class="kpis" id="kpiRow"></div>
+
+  <div class="panels">
+    <div class="panel">
+      <h2>Capacity by state (MW) <span class="tag" id="chartMonthLabel"></span></h2>
+      <canvas id="barChart"></canvas>
+    </div>
+    <div class="panel">
+      <h2>Total capacity trend <span class="tag">Mar &ndash; Jun 2026</span></h2>
+      <canvas id="lineChart"></canvas>
+    </div>
+  </div>
+
+  <div class="table-panel">
+    <h2 style="font-family:'Space Grotesk',sans-serif;font-size:14px;margin:0 0 14px;font-weight:600;">
+      State-wise breakdown <span class="tag" style="color:var(--muted);font-weight:400;font-size:12px;">MW / substations, selected month</span>
+    </h2>
+    <table>
+      <thead>
+        <tr>
+          <th>State</th>
+          <th class="num">MW</th>
+          <th style="width:160px;">Share</th>
+          <th class="num">Substations</th>
+          <th class="num">MW / Substation</th>
+        </tr>
+      </thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+  </div>
+
+  <footer>Live-synced from the published Google Sheet workbook (F&amp;S_PORTFOLIO tab) &middot; auto-refreshes every 5 minutes, or click "refresh now"</footer>
+</div>
+
+<script>
+const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ_H5LpxOmSjETpEMB07NjmU4QOfEe07A_8P2F_KsKG4Q_cjoFXCzQJJ7_YILQ20h_AZnBvPOwG77bX/pub?output=csv";
+const AUTO_REFRESH_MS = 5 * 60 * 1000; // re-sync every 5 minutes
+
+// Fallback snapshot, used only if the live fetch fails (e.g. offline, sheet not public)
+const FALLBACK_MONTHS = ["March-2026","April-2026","May-2026","June-2026"];
+const FALLBACK_MONTH_SHORT = ["Mar 2026","Apr 2026","May 2026","Jun 2026"];
+
+const FALLBACK_MW = {
+  "IN_AP":[3656,3657,3657,3650],
+  "IN_BR":[185,185,185,185],
+  "IN_CH":[180,180,180,180],
+  "IN_GJ":[6029,6041,6172,6305],
+  "IN_HR":[98,107,177,177],
+  "IN_KA":[10126,10417,10718,11127],
+  "IN_MH":[3310,3424,3512,3532],
+  "IN_MP":[2164,2164,2264,2459],
+  "IN_OR":[31,31,46,46],
+  "IN_PB":[583,583,594,636],
+  "IN_RJ":[6125,5730,5880,5145],
+  "IN_TG":[986,986,986,986],
+  "IN_TN":[6125,6302,6328,6502],
+  "IN_UP":[1549,1549,1603,1608]
+};
+
+const FALLBACK_PSS = {
+  "IN_AP":[70,71,71,70],
+  "IN_BR":[1,1,1,1],
+  "IN_CH":[3,3,3,3],
+  "IN_GJ":[338,355,393,415],
+  "IN_HR":[7,8,9,9],
+  "IN_KA":[255,256,278,280],
+  "IN_MH":[71,74,77,77],
+  "IN_MP":[76,76,78,82],
+  "IN_OR":[3,3,4,4],
+  "IN_PB":[20,20,20,23],
+  "IN_RJ":[54,52,53,52],
+  "IN_TG":[59,59,59,59],
+  "IN_TN":[200,202,203,203],
+  "IN_UP":[45,45,48,49]
+};
+
+// Live state — populated by fetchLiveData(), falls back to the constants above
+let months = FALLBACK_MONTHS;
+let monthShort = FALLBACK_MONTH_SHORT;
+let mwData = FALLBACK_MW;
+let pssData = FALLBACK_PSS;
+let states = Object.keys(mwData);
+let selectedMonth = months.length - 1;
+let totalPerMonth = [];
+let pssTotalPerMonth = [];
+
+function fmt(n){ return n.toLocaleString('en-IN'); }
+
+function recomputeTotals(){
+  states = Object.keys(mwData);
+  if(selectedMonth > months.length-1) selectedMonth = months.length-1;
+  totalPerMonth = months.map((_,i)=> states.reduce((s,st)=> s+(mwData[st][i]||0),0));
+  pssTotalPerMonth = months.map((_,i)=> states.reduce((s,st)=> s+(pssData[st][i]||0),0));
+}
+recomputeTotals();
+
+// --- Parse the two stacked tables ("SUM of MW" / "COUNTA of PSS ID") out of a sheet's rows ---
+function parseBlock(rows, startLabel){
+  const startIdx = rows.findIndex(r => (r[0]||"").toString().trim() === startLabel);
+  if(startIdx === -1) return null;
+  const headerRow = rows[startIdx+1] || [];
+  const blockMonths = [];
+  for(let c=1; c<headerRow.length; c++){
+    const v = (headerRow[c]||"").toString().trim();
+    if(!v || /grand total/i.test(v)) break;
+    blockMonths.push(v);
+  }
+  const data = {};
+  let r = startIdx+2;
+  while(r < rows.length){
+    const row = rows[r];
+    const label = (row[0]||"").toString().trim();
+    if(!label || /grand total/i.test(label)) break;
+    data[label] = blockMonths.map((_,ci)=>{
+      const raw = row[ci+1];
+      const n = typeof raw === "number" ? raw : parseFloat((raw||"0").toString().replace(/,/g,""));
+      return isNaN(n) ? 0 : n;
+    });
+    r++;
+  }
+  return { months: blockMonths, data };
+}
+
+async function fetchLiveData(){
+  const badge = document.getElementById('liveBadge');
+  const label = document.getElementById('liveLabel');
+  badge.className = 'live';
+  label.textContent = 'SYNCING…';
+
+  try{
+    const res = await fetch(CSV_URL, { cache: "no-store" });
+    if(!res.ok) throw new Error("HTTP " + res.status);
+    const text = await res.text();
+    const parsed = Papa.parse(text.trim(), { skipEmptyLines: false });
+    const rows = parsed.data;
+
+    const mwBlock = parseBlock(rows, "SUM of MW");
+    const pssBlock = parseBlock(rows, "COUNTA of PSS ID");
+    if(!mwBlock || !Object.keys(mwBlock.data).length) throw new Error("Could not locate data table");
+
+    months = mwBlock.months;
+    monthShort = months.map(m=>{
+      const [name, yr] = m.split("-");
+      return (name||m).slice(0,3) + (yr ? " " + yr : "");
+    });
+    mwData = mwBlock.data;
+    pssData = (pssBlock && pssBlock.data) || {};
+    // ensure every state has a pss row so charts don't break
+    Object.keys(mwData).forEach(s=>{ if(!pssData[s]) pssData[s] = mwData[s].map(()=>0); });
+
+    selectedMonth = months.length - 1;
+    recomputeTotals();
+
+    badge.className = 'live';
+    label.textContent = 'LIVE';
+    document.getElementById('asOf').textContent = 'last synced: ' + new Date().toLocaleTimeString();
+    renderAll();
+  }catch(err){
+    badge.className = 'live err';
+    label.textContent = 'SYNC FAILED — showing snapshot';
+    document.getElementById('asOf').textContent = 'error: ' + err.message;
+    months = FALLBACK_MONTHS; monthShort = FALLBACK_MONTH_SHORT;
+    mwData = FALLBACK_MW; pssData = FALLBACK_PSS;
+    selectedMonth = months.length - 1;
+    recomputeTotals();
+    renderAll();
+  }
+}
+
+function renderChips(){
+  const el = document.getElementById('monthChips');
+  el.innerHTML = "";
+  months.forEach((m,i)=>{
+    const chip = document.createElement('div');
+    chip.className = 'chip' + (i===selectedMonth ? ' active' : '');
+    chip.textContent = monthShort[i];
+    chip.onclick = ()=>{ selectedMonth = i; renderAll(); };
+    el.appendChild(chip);
+  });
+}
+
+function renderKpis(){
+  const i = selectedMonth;
+  const prev = i>0 ? totalPerMonth[i-1] : null;
+  const totalMW = totalPerMonth[i];
+  const totalPSS = pssTotalPerMonth[i];
+  const numStates = states.length;
+  const avgPerPss = totalMW/totalPSS;
+
+  const mwDelta = prev!==null ? (((totalMW-prev)/prev)*100) : null;
+
+  const kpis = [
+    { label:"Total capacity", value: fmt(totalMW), unit:"MW", cls:"", delta: mwDelta },
+    { label:"Total substations", value: fmt(totalPSS), unit:"nos", cls:"cyan", delta: null },
+    { label:"States reporting", value: numStates, unit:"states", cls:"green", delta: null },
+    { label:"Avg. MW / substation", value: avgPerPss.toFixed(1), unit:"MW", cls:"", delta: null }
+  ];
+
+  const row = document.getElementById('kpiRow');
+  row.innerHTML = kpis.map(k=>`
+    <div class="kpi ${k.cls}">
+      <div class="label">${k.label}</div>
+      <div class="value">${k.value}<span>${k.unit}</span></div>
+      ${k.delta!==null ? `<div class="delta ${k.delta<0?'neg':''}">${k.delta>=0?'&#8593;':'&#8595;'} ${Math.abs(k.delta).toFixed(1)}% vs prior month</div>` : `<div class="delta" style="color:var(--muted);">&mdash;</div>`}
+    </div>
+  `).join("");
+}
+
+let barChart, lineChart;
+function renderBarChart(){
+  const i = selectedMonth;
+  document.getElementById('chartMonthLabel').textContent = monthShort[i];
+  const sorted = [...states].sort((a,b)=> a.localeCompare(b));
+  const data = sorted.map(s=>mwData[s][i]);
+
+  const ctx = document.getElementById('barChart');
+  if(barChart) barChart.destroy();
+  barChart = new Chart(ctx,{
+    type:'bar',
+    data:{
+      labels: sorted.map(s=>s.replace('IN_','')),
+      datasets:[{
+        data,
+        backgroundColor:'#700EEE',
+        borderRadius:4,
+        maxBarThickness:26
+      }]
+    },
+    options:{
+      responsive:true,
+      plugins:{ legend:{display:false},
+        tooltip:{ callbacks:{ label: c=> fmt(c.raw)+" MW" } } },
+      scales:{
+        x:{ grid:{display:false}, ticks:{ color:'#7E8C97', font:{family:'IBM Plex Mono',size:11} } },
+        y:{ grid:{color:'#1E2830'}, ticks:{ color:'#7E8C97', font:{family:'IBM Plex Mono',size:11} } }
+      }
+    }
+  });
+}
+
+function renderLineChart(){
+  const ctx = document.getElementById('lineChart');
+  if(lineChart) lineChart.destroy();
+  lineChart = new Chart(ctx,{
+    type:'line',
+    data:{
+      labels: monthShort,
+      datasets:[{
+        data: totalPerMonth,
+        borderColor:'#D0FF00',
+        backgroundColor:'rgba(208,255,0,0.10)',
+        fill:true,
+        tension:0.35,
+        pointBackgroundColor:'#D0FF00',
+        pointRadius:4,
+        borderWidth:2
+      }]
+    },
+    options:{
+      responsive:true,
+      plugins:{ legend:{display:false},
+        tooltip:{ callbacks:{ label: c=> fmt(c.raw)+" MW total" } } },
+      scales:{
+        x:{ grid:{display:false}, ticks:{ color:'#7E8C97', font:{family:'IBM Plex Mono',size:11} } },
+        y:{ grid:{color:'#1E2830'}, ticks:{ color:'#7E8C97', font:{family:'IBM Plex Mono',size:11} } }
+      }
+    }
+  });
+}
+
+function renderTable(){
+  const i = selectedMonth;
+  const totalMW = totalPerMonth[i];
+  const sorted = [...states].sort((a,b)=> a.localeCompare(b));
+  const rows = sorted.map(s=>{
+    const mw = mwData[s][i];
+    const pss = pssData[s][i];
+    const share = (mw/totalMW*100);
+    return `
+      <tr>
+        <td class="state">${s.replace('IN_','')}</td>
+        <td class="num">${fmt(mw)}</td>
+        <td>
+          <div class="bar-cell">
+            <div class="bar-track"><div class="bar-fill" style="width:${share.toFixed(1)}%"></div></div>
+            <span style="color:var(--muted);font-size:11.5px;width:38px;">${share.toFixed(1)}%</span>
+          </div>
+        </td>
+        <td class="num">${fmt(pss)}</td>
+        <td class="num">${(mw/pss).toFixed(1)}</td>
+      </tr>`;
+  }).join("");
+
+  const totalPSS = pssTotalPerMonth[i];
+  const totalRow = `
+    <tr class="total">
+      <td>Grand Total</td>
+      <td class="num">${fmt(totalMW)}</td>
+      <td></td>
+      <td class="num">${fmt(totalPSS)}</td>
+      <td class="num">${(totalMW/totalPSS).toFixed(1)}</td>
+    </tr>`;
+
+  document.getElementById('tableBody').innerHTML = rows + totalRow;
+}
+
+function renderAll(){
+  renderChips();
+  renderKpis();
+  renderBarChart();
+  renderLineChart();
+  renderTable();
+}
+
+renderAll(); // paint fallback immediately so the dashboard is never blank
+fetchLiveData();
+setInterval(fetchLiveData, AUTO_REFRESH_MS);
+document.getElementById('refreshBtn').addEventListener('click', fetchLiveData);
+</script>
+</body>
+</html>
