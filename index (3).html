@@ -1,0 +1,1249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Grid Capacity Monitor</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+  :root{
+    --bg: #000F35;
+    --panel: #061542;
+    --panel-hi: #0B1B4E;
+    --border: #263B72;
+    --amber: #D0FF00;
+    --cyan: #B00FFF;
+    --green: #D0FF00;
+    --text: #CCCFFF;
+    --muted: #888DDD;
+    --purple: #700EEE;
+    --mono: 'IBM Plex Mono', ui-monospace, monospace;
+  }
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:'IBM Plex Sans', sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1200px;margin:0 auto;padding:28px 24px 60px;}
+
+  /* header */
+  header{
+    display:flex;justify-content:space-between;align-items:flex-start;
+    padding-bottom:20px;border-bottom:1px solid var(--border);margin-bottom:24px;
+    flex-wrap:wrap;gap:16px;
+  }
+  .title-block h1{
+    font-family:'Space Grotesk',sans-serif;
+    font-size:26px;font-weight:700;margin:0 0 4px;letter-spacing:0.3px;
+  }
+  .title-block .sub{color:var(--muted);font-size:13px;font-family:var(--mono);}
+  .live{
+    display:inline-flex;align-items:center;gap:7px;
+    font-family:var(--mono);font-size:12px;color:var(--green);
+    border:1px solid rgba(208,255,0,0.35);background:rgba(208,255,0,0.08);
+    padding:5px 10px;border-radius:20px;
+  }
+  .live .dot{width:7px;height:7px;border-radius:50%;background:var(--green);
+    box-shadow:0 0 0 0 rgba(208,255,0,0.6);animation:pulse 1.8s infinite;}
+  @keyframes pulse{
+    0%{box-shadow:0 0 0 0 rgba(208,255,0,0.55);}
+    70%{box-shadow:0 0 0 7px rgba(208,255,0,0);}
+    100%{box-shadow:0 0 0 0 rgba(208,255,0,0);}
+  }
+  .asof{color:var(--muted);font-size:12px;font-family:var(--mono);margin-top:8px;text-align:right;}
+  .live.err{color:var(--cyan);border-color:rgba(176,15,255,0.4);background:rgba(176,15,255,0.08);}
+  .live.err .dot{background:var(--cyan);box-shadow:none;animation:none;}
+  .refresh-btn{cursor:pointer;color:var(--muted);text-decoration:underline dotted;}
+  .refresh-btn:hover{color:var(--text);}
+
+  /* month chips */
+  .chips-row{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:24px;flex-wrap:wrap;}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;}
+  .toggle{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;}
+  .toggle input{display:none;}
+  .toggle-track{
+    width:34px;height:19px;border-radius:20px;background:var(--panel);
+    border:1px solid var(--border);position:relative;transition:.15s;flex:none;
+  }
+  .toggle-thumb{
+    position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;
+    background:var(--muted);transition:.15s;
+  }
+  .toggle input:checked + .toggle-track{background:rgba(208,255,0,0.15);border-color:var(--amber);}
+  .toggle input:checked + .toggle-track .toggle-thumb{transform:translateX(15px);background:var(--amber);}
+  .toggle-label{font-family:var(--mono);font-size:12.5px;color:var(--muted);}
+  .chip{
+    font-family:var(--mono);font-size:12.5px;padding:7px 14px;border-radius:7px;
+    border:1px solid var(--border);background:var(--panel);color:var(--muted);
+    cursor:pointer;transition:.15s;user-select:none;
+  }
+  .chip:hover{color:var(--text);border-color:#33424d;}
+  .chip.active{background:rgba(242,169,59,0.12);border-color:var(--amber);color:var(--amber);}
+
+  /* KPI row */
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px;}
+  .kpi{
+    background:var(--panel);border:1px solid var(--border);border-radius:10px;
+    padding:18px 18px 16px;position:relative;overflow:hidden;
+  }
+  .kpi::before{
+    content:"";position:absolute;top:0;left:0;width:3px;height:100%;background:var(--amber);
+  }
+  .kpi.cyan::before{background:var(--purple);}
+  .kpi.green::before{background:var(--cyan);}
+  .kpi .label{color:var(--muted);font-size:11.5px;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:10px;}
+  .kpi .value{font-family:var(--mono);font-size:28px;font-weight:600;line-height:1;}
+  .kpi .value span{font-size:14px;color:var(--muted);font-weight:400;margin-left:4px;}
+  .kpi .delta{font-family:var(--mono);font-size:12px;margin-top:8px;color:var(--green);}
+  .kpi .delta.neg{color:#B00FFF;}
+
+  /* panels */
+  .panels{display:grid;grid-template-columns:1.3fr 1fr;gap:16px;margin-bottom:24px;}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px 18px 8px;}
+  .panel h2{
+    font-family:'Space Grotesk',sans-serif;font-size:14px;margin:0;
+    color:var(--text);font-weight:600;
+  }
+  .panel-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:10px;}
+  .panel h2 .tag{color:var(--muted);font-weight:400;font-size:12px;margin-left:6px;}
+  .dl-btn{
+    font-family:var(--mono);font-size:11.5px;color:var(--muted);cursor:pointer;
+    border:1px solid var(--border);padding:4px 9px;border-radius:6px;white-space:nowrap;
+    transition:.15s;
+  }
+  .dl-btn:hover{color:var(--amber);border-color:var(--amber);}
+  canvas{max-height:280px;}
+  .dl-menu{position:relative;flex:none;}
+  .dl-dropdown{
+    display:none;position:absolute;top:calc(100% + 6px);right:0;z-index:20;
+    background:var(--panel-hi);border:1px solid var(--border);border-radius:8px;
+    overflow:hidden;min-width:120px;box-shadow:0 8px 20px rgba(0,0,0,0.35);
+  }
+  .dl-dropdown.open{display:block;}
+  .dl-opt{
+    padding:8px 12px;font-family:var(--mono);font-size:12px;color:var(--text);
+    cursor:pointer;white-space:nowrap;
+  }
+  .dl-opt:hover{background:rgba(208,255,0,0.10);color:var(--amber);}
+
+  /* table */
+  .table-panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  thead th{
+    text-align:left;color:var(--muted);font-weight:500;font-size:11px;text-transform:uppercase;
+    letter-spacing:.6px;padding:0 10px 10px;border-bottom:1px solid var(--border);
+  }
+  thead th.num, tbody td.num{text-align:right;}
+  tbody td{padding:10px 10px;border-bottom:1px solid rgba(30,40,48,0.6);font-family:var(--mono);}
+  tbody td.state{font-family:'IBM Plex Sans';font-weight:500;}
+  tbody tr:hover{background:var(--panel-hi);}
+  tbody tr.total td{font-weight:600;color:var(--amber);border-top:1px solid var(--border);border-bottom:none;}
+  .bar-cell{display:flex;align-items:center;gap:8px;}
+  .bar-track{flex:1;height:6px;background:#182028;border-radius:4px;overflow:hidden;}
+  .bar-fill{height:100%;background:linear-gradient(90deg,var(--purple),var(--amber));border-radius:4px;}
+
+  footer{margin-top:26px;color:var(--muted);font-size:12px;font-family:var(--mono);text-align:center;}
+
+  @media (max-width:820px){
+    .kpis{grid-template-columns:repeat(2,1fr);}
+    .panels{grid-template-columns:1fr;}
+  }
+
+  /* ---- page nav (Portfolio / Service Type) ---- */
+  .page-nav{display:flex;gap:8px;margin-bottom:22px;border-bottom:1px solid var(--border);}
+  .page-nav button{
+    font-family:var(--mono);font-size:12.5px;letter-spacing:.4px;text-transform:uppercase;
+    background:none;border:none;color:var(--muted);padding:10px 4px 12px;margin-right:18px;
+    cursor:pointer;border-bottom:2px solid transparent;transition:.15s;
+  }
+  .page-nav button:hover{color:var(--text);}
+  .page-nav button.active{color:var(--amber);border-bottom-color:var(--amber);}
+  .app-page{display:none;}
+  .app-page.active{display:block;}
+
+  /* ---- service-type sub toggle + legend ---- */
+  .subtoggle-row{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:20px;flex-wrap:wrap;}
+  .subtoggle{display:flex;gap:8px;}
+  .subtoggle button{
+    font-family:var(--mono);font-size:12px;padding:7px 14px;border-radius:7px;
+    border:1px solid var(--border);background:var(--panel);color:var(--muted);cursor:pointer;transition:.15s;
+  }
+  .subtoggle button:hover{color:var(--text);}
+  .subtoggle button.active{background:rgba(112,14,238,0.18);border-color:var(--purple);color:#E4C8FF;}
+  .st-legend{display:flex;gap:16px;font-family:var(--mono);font-size:11.5px;color:var(--muted);}
+  .st-legend .sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:middle;}
+
+  .empty-panel{
+    border:1px dashed var(--border);border-radius:10px;padding:50px 30px;text-align:center;
+    background:var(--panel);
+  }
+  .empty-panel h3{margin:0 0 8px;font-family:'Space Grotesk',sans-serif;font-size:16px;color:var(--text);}
+  .empty-panel p{color:var(--muted);font-size:13px;max-width:480px;margin:0 auto;line-height:1.6;font-family:'IBM Plex Sans';}
+  .empty-panel .tagline{
+    display:inline-block;margin-top:16px;font-family:var(--mono);font-size:11px;color:var(--muted);
+    border:1px solid var(--border);padding:5px 12px;border-radius:20px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="title-block">
+      <h1>Grid Capacity Monitor</h1>
+      <div class="sub">F&amp;S_PORTFOLIO &middot; State-wise MW &amp; substation count</div>
+    </div>
+    <div>
+      <div class="live" id="liveBadge"><span class="dot"></span><span id="liveLabel">SYNCING&hellip;</span></div>
+      <div class="asof" id="asOf">last synced: &mdash;</div>
+      <div class="asof" style="margin-top:6px;"><span class="refresh-btn" id="refreshBtn">&#x21bb; refresh now</span></div>
+    </div>
+  </header>
+
+  <div class="page-nav">
+    <button class="active" data-page="portfolio">Portfolio</button>
+    <button data-page="servicetype">F&amp;S Service Type</button>
+  </div>
+
+  <section class="app-page active" id="page-portfolio">
+
+  <div class="chips-row">
+    <div class="chips" id="monthChips"></div>
+    <label class="toggle" title="Show/hide values on chart bars and points">
+      <input type="checkbox" id="toggleLabels">
+      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+      <span class="toggle-label">Data labels</span>
+    </label>
+  </div>
+
+  <div class="kpis" id="kpiRow"></div>
+
+  <div class="panels">
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Capacity by state (MW) <span class="tag" id="chartMonthLabel"></span></h2>
+        <div class="dl-menu" id="dlBarMenu">
+          <span class="dl-btn">&#8681; Download</span>
+          <div class="dl-dropdown">
+            <div class="dl-opt" data-fmt="jpg">Image (JPG)</div>
+            <div class="dl-opt" data-fmt="pdf">PDF</div>
+            <div class="dl-opt" data-fmt="csv">Data (CSV)</div>
+          </div>
+        </div>
+      </div>
+      <canvas id="barChart"></canvas>
+    </div>
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Total capacity trend <span class="tag">Financial year 2026</span></h2>
+        <div class="dl-menu" id="dlLineMenu">
+          <span class="dl-btn">&#8681; Download</span>
+          <div class="dl-dropdown">
+            <div class="dl-opt" data-fmt="jpg">Image (JPG)</div>
+            <div class="dl-opt" data-fmt="pdf">PDF</div>
+            <div class="dl-opt" data-fmt="csv">Data (CSV)</div>
+          </div>
+        </div>
+      </div>
+      <canvas id="lineChart"></canvas>
+    </div>
+  </div>
+
+  <div class="table-panel">
+    <h2 style="font-family:'Space Grotesk',sans-serif;font-size:14px;margin:0 0 14px;font-weight:600;">
+      State-wise breakdown <span class="tag" style="color:var(--muted);font-weight:400;font-size:12px;">MW / substations, selected month</span>
+    </h2>
+    <table>
+      <thead>
+        <tr>
+          <th>State</th>
+          <th class="num">MW</th>
+          <th style="width:160px;">Share</th>
+          <th class="num">Substations</th>
+          <th class="num">MW / Substation</th>
+        </tr>
+      </thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+  </div>
+
+  </section>
+
+  <section class="app-page" id="page-servicetype">
+
+    <div class="subtoggle-row">
+      <div class="subtoggle" id="stMetricToggle">
+        <button data-metric="mw" class="active">MW</button>
+        <button data-metric="ss">Count of SS</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+        <div class="st-legend">
+          <span><span class="sw" style="background:#2DD4BF"></span>FSP</span>
+          <span><span class="sw" style="background:#D0FF00"></span>QCA</span>
+          <span><span class="sw" style="background:#B00FFF"></span>TRIAL</span>
+        </div>
+        <div class="live" id="stLiveBadge"><span class="dot"></span><span id="stLiveLabel">SYNCING&hellip;</span></div>
+      </div>
+    </div>
+    <div class="asof" id="stAsOf" style="text-align:left;margin-bottom:18px;">last synced: &mdash; &middot; <span class="refresh-btn" id="stRefreshBtn">&#x21bb; refresh now</span></div>
+
+    <div class="chips-row">
+      <div class="chips" id="stMonthChips"></div>
+      <label class="toggle" title="Show/hide values on chart bars and points">
+        <input type="checkbox" id="stToggleLabels">
+        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        <span class="toggle-label">Data labels</span>
+      </label>
+    </div>
+
+    <div class="kpis" id="stKpiRow"></div>
+
+    <div class="panels">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>State-wise capacity, stacked by service type <span class="tag" id="stChartMonthLabel"></span></h2>
+          <div class="dl-menu" id="dlStStateMenu">
+            <span class="dl-btn">&#8681; Download</span>
+            <div class="dl-dropdown">
+              <div class="dl-opt" data-fmt="jpg">Image (JPG)</div>
+              <div class="dl-opt" data-fmt="pdf">PDF</div>
+              <div class="dl-opt" data-fmt="csv">Data (CSV)</div>
+            </div>
+          </div>
+        </div>
+        <canvas id="stStateChart"></canvas>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Grand total trend <span class="tag">by service type</span></h2>
+          <div class="dl-menu" id="dlStTrendMenu">
+            <span class="dl-btn">&#8681; Download</span>
+            <div class="dl-dropdown">
+              <div class="dl-opt" data-fmt="jpg">Image (JPG)</div>
+              <div class="dl-opt" data-fmt="pdf">PDF</div>
+              <div class="dl-opt" data-fmt="csv">Data (CSV)</div>
+            </div>
+          </div>
+        </div>
+        <canvas id="stTrendChart"></canvas>
+      </div>
+    </div>
+
+    <div class="table-panel" id="stTableWrap">
+      <h2 style="font-family:'Space Grotesk',sans-serif;font-size:14px;margin:0 0 14px;font-weight:600;">
+        State-wise breakdown <span class="tag" style="color:var(--muted);font-weight:400;font-size:12px;">by service type, selected month</span>
+      </h2>
+      <table>
+        <thead>
+          <tr>
+            <th>State</th>
+            <th class="num">FSP</th>
+            <th class="num">QCA</th>
+            <th class="num">TRIAL</th>
+            <th class="num">Total</th>
+          </tr>
+        </thead>
+        <tbody id="stTableBody"></tbody>
+      </table>
+    </div>
+
+    <div class="empty-panel" id="stEmptyPanel" style="display:none;margin-top:16px;">
+      <h3>Count of SS — awaiting data</h3>
+      <p>
+        The F&amp;S_SERVICE_TYPE tab has a second data structure — count of SS by state /
+        service type / month — but it hasn't been supplied yet. Once it's added (same layout:
+        State &times; FSP/QCA/TRIAL &times; Mar&ndash;Jun 2026), this view will populate automatically.
+      </p>
+      <div class="tagline">Structure expected: State &rarr; FSP / QCA / TRIAL &rarr; Mar / Apr / May / Jun 2026</div>
+    </div>
+
+  </section>
+
+  <footer>Live-synced from the published Google Sheet workbook (F&amp;S_PORTFOLIO tab) &middot; auto-refreshes every 5 minutes, or click "refresh now"</footer>
+</div>
+
+<script>
+const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ_H5LpxOmSjETpEMB07NjmU4QOfEe07A_8P2F_KsKG4Q_cjoFXCzQJJ7_YILQ20h_AZnBvPOwG77bX/pub?output=csv";
+const AUTO_REFRESH_MS = 5 * 60 * 1000; // re-sync every 5 minutes
+
+// Fallback snapshot, used only if the live fetch fails (e.g. offline, sheet not public)
+const FALLBACK_MONTHS = ["March-2026","April-2026","May-2026","June-2026"];
+const FALLBACK_MONTH_SHORT = ["Mar 2026","Apr 2026","May 2026","Jun 2026"];
+
+const FALLBACK_MW = {
+  "IN_AP":[3656,3657,3657,3650],
+  "IN_BR":[185,185,185,185],
+  "IN_CH":[180,180,180,180],
+  "IN_GJ":[6029,6041,6172,6305],
+  "IN_HR":[98,107,177,177],
+  "IN_KA":[10126,10417,10718,11127],
+  "IN_MH":[3310,3424,3512,3532],
+  "IN_MP":[2164,2164,2264,2459],
+  "IN_OR":[31,31,46,46],
+  "IN_PB":[583,583,594,636],
+  "IN_RJ":[6125,5730,5880,5145],
+  "IN_TG":[986,986,986,986],
+  "IN_TN":[6125,6302,6328,6502],
+  "IN_UP":[1549,1549,1603,1608]
+};
+
+const FALLBACK_PSS = {
+  "IN_AP":[70,71,71,70],
+  "IN_BR":[1,1,1,1],
+  "IN_CH":[3,3,3,3],
+  "IN_GJ":[338,355,393,415],
+  "IN_HR":[7,8,9,9],
+  "IN_KA":[255,256,278,280],
+  "IN_MH":[71,74,77,77],
+  "IN_MP":[76,76,78,82],
+  "IN_OR":[3,3,4,4],
+  "IN_PB":[20,20,20,23],
+  "IN_RJ":[54,52,53,52],
+  "IN_TG":[59,59,59,59],
+  "IN_TN":[200,202,203,203],
+  "IN_UP":[45,45,48,49]
+};
+
+// Live state — populated by fetchLiveData(), falls back to the constants above
+let months = FALLBACK_MONTHS;
+let monthShort = FALLBACK_MONTH_SHORT;
+let mwData = FALLBACK_MW;
+let pssData = FALLBACK_PSS;
+let states = Object.keys(mwData);
+let selectedMonth = months.length - 1;
+let totalPerMonth = [];
+let pssTotalPerMonth = [];
+
+function fmt(n){ return n.toLocaleString('en-IN'); }
+
+function recomputeTotals(){
+  states = Object.keys(mwData);
+  if(selectedMonth > months.length-1) selectedMonth = months.length-1;
+  totalPerMonth = months.map((_,i)=> states.reduce((s,st)=> s+(mwData[st][i]||0),0));
+  pssTotalPerMonth = months.map((_,i)=> states.reduce((s,st)=> s+(pssData[st][i]||0),0));
+}
+recomputeTotals();
+
+// --- Parse the two stacked tables ("SUM of MW" / "COUNTA of PSS ID") out of a sheet's rows ---
+// Minimal RFC-4180 CSV parser (no external library needed) — handles quoted
+// fields, embedded commas/newlines inside quotes, and "" escaped quotes.
+function parseCSV(text){
+  const rows = [];
+  let row = [], field = "", inQuotes = false;
+  for(let i=0; i<text.length; i++){
+    const c = text[i];
+    if(inQuotes){
+      if(c === '"'){
+        if(text[i+1] === '"'){ field += '"'; i++; }
+        else inQuotes = false;
+      } else field += c;
+    } else {
+      if(c === '"') inQuotes = true;
+      else if(c === ','){ row.push(field); field = ""; }
+      else if(c === '\r'){ /* skip, \n handles the line break */ }
+      else if(c === '\n'){ row.push(field); rows.push(row); row = []; field = ""; }
+      else field += c;
+    }
+  }
+  if(field.length || row.length){ row.push(field); rows.push(row); }
+  return rows;
+}
+
+function parseBlock(rows, startLabel){
+  const startIdx = rows.findIndex(r => (r[0]||"").toString().trim() === startLabel);
+  if(startIdx === -1) return null;
+  const headerRow = rows[startIdx+1] || [];
+  const blockMonths = [];
+  for(let c=1; c<headerRow.length; c++){
+    const v = (headerRow[c]||"").toString().trim();
+    if(!v || /grand total/i.test(v)) break;
+    blockMonths.push(v);
+  }
+  const data = {};
+  let r = startIdx+2;
+  while(r < rows.length){
+    const row = rows[r];
+    const label = (row[0]||"").toString().trim();
+    if(!label || /grand total/i.test(label)) break;
+    data[label] = blockMonths.map((_,ci)=>{
+      const raw = row[ci+1];
+      const n = typeof raw === "number" ? raw : parseFloat((raw||"0").toString().replace(/,/g,""));
+      return isNaN(n) ? 0 : n;
+    });
+    r++;
+  }
+  return { months: blockMonths, data };
+}
+
+async function fetchLiveData(){
+  const badge = document.getElementById('liveBadge');
+  const label = document.getElementById('liveLabel');
+  badge.className = 'live';
+  label.textContent = 'SYNCING…';
+
+  try{
+    const res = await fetch(CSV_URL + (CSV_URL.includes("?") ? "&" : "?") + "_cb=" + Date.now(), { cache: "no-store" });
+    if(!res.ok) throw new Error("HTTP " + res.status);
+    const text = await res.text();
+    const rows = parseCSV(text.trim());
+
+    const mwBlock = parseBlock(rows, "SUM of MW");
+    const pssBlock = parseBlock(rows, "COUNTA of PSS ID");
+    if(!mwBlock || !Object.keys(mwBlock.data).length) throw new Error("Could not locate data table");
+
+    months = mwBlock.months;
+    monthShort = months.map(m=>{
+      const [name, yr] = m.split("-");
+      return (name||m).slice(0,3) + (yr ? " " + yr : "");
+    });
+    mwData = mwBlock.data;
+    pssData = (pssBlock && pssBlock.data) || {};
+    // ensure every state has a pss row so charts don't break
+    Object.keys(mwData).forEach(s=>{ if(!pssData[s]) pssData[s] = mwData[s].map(()=>0); });
+
+    selectedMonth = months.length - 1;
+    recomputeTotals();
+
+    badge.className = 'live';
+    label.textContent = 'LIVE';
+    document.getElementById('asOf').textContent = 'last synced: ' + new Date().toLocaleTimeString();
+    renderAll();
+  }catch(err){
+    badge.className = 'live err';
+    label.textContent = 'SYNC FAILED — showing snapshot';
+    document.getElementById('asOf').textContent = 'error: ' + err.message;
+    months = FALLBACK_MONTHS; monthShort = FALLBACK_MONTH_SHORT;
+    mwData = FALLBACK_MW; pssData = FALLBACK_PSS;
+    selectedMonth = months.length - 1;
+    recomputeTotals();
+    renderAll();
+  }
+}
+
+function renderChips(){
+  const el = document.getElementById('monthChips');
+  el.innerHTML = "";
+  months.forEach((m,i)=>{
+    const chip = document.createElement('div');
+    chip.className = 'chip' + (i===selectedMonth ? ' active' : '');
+    chip.textContent = monthShort[i];
+    chip.onclick = ()=>{ selectedMonth = i; renderAll(); };
+    el.appendChild(chip);
+  });
+}
+
+function renderKpis(){
+  const i = selectedMonth;
+  const prev = i>0 ? totalPerMonth[i-1] : null;
+  const totalMW = totalPerMonth[i];
+  const totalPSS = pssTotalPerMonth[i];
+  const numStates = states.length;
+  const avgPerPss = totalMW/totalPSS;
+
+  const mwDelta = prev!==null ? (((totalMW-prev)/prev)*100) : null;
+
+  // FY increment: % change vs the first month in the dataset (treated as the FY baseline, e.g. Mar 2026)
+  const fyBase = totalPerMonth[0];
+  const fyDelta = (i>0 && fyBase) ? (((totalMW-fyBase)/fyBase)*100) : null;
+  const fyBaseLabel = months[0] ? months[0].split("-")[0] : "baseline";
+
+  const kpis = [
+    { label:"Total capacity", value: fmt(totalMW), unit:"MW", cls:"",
+      deltas: [
+        prev!==null ? { text: `${mwDelta>=0?'&#8593;':'&#8595;'} ${Math.abs(mwDelta).toFixed(1)}% vs prior month`, neg: mwDelta<0 } : null,
+        fyDelta!==null ? { text: `${fyDelta>=0?'&#8593;':'&#8595;'} ${Math.abs(fyDelta).toFixed(1)}% FY increment (vs ${fyBaseLabel} 2026)`, neg: fyDelta<0 } : null
+      ].filter(Boolean)
+    },
+    { label:"Total substations", value: fmt(totalPSS), unit:"nos", cls:"cyan", deltas: [] },
+    { label:"States reporting", value: numStates, unit:"states", cls:"green", deltas: [] },
+    { label:"Avg. MW / substation", value: avgPerPss.toFixed(1), unit:"MW", cls:"", deltas: [] }
+  ];
+
+  const row = document.getElementById('kpiRow');
+  row.innerHTML = kpis.map(k=>`
+    <div class="kpi ${k.cls}">
+      <div class="label">${k.label}</div>
+      <div class="value">${k.value}<span>${k.unit}</span></div>
+      ${k.deltas.length ? k.deltas.map(d=>`<div class="delta ${d.neg?'neg':''}">${d.text}</div>`).join("") : `<div class="delta" style="color:var(--muted);">&mdash;</div>`}
+    </div>
+  `).join("");
+}
+
+let showDataLabels = false;
+
+// Draws the value above each bar / point when showDataLabels is on — no external library needed.
+const dataLabelsPlugin = {
+  id: 'dataLabels',
+  afterDatasetsDraw(chart){
+    if(!showDataLabels) return;
+    const ctx = chart.canvas.getContext('2d');
+    ctx.save();
+    ctx.font = "500 11px 'IBM Plex Mono', monospace";
+    ctx.fillStyle = '#CCCFFF';
+    ctx.textAlign = 'center';
+    chart.data.datasets.forEach((ds, di)=>{
+      const meta = chart.getDatasetMeta(di);
+      meta.data.forEach((el, i)=>{
+        const val = ds.data[i];
+        if(val === null || val === undefined) return;
+        ctx.fillText(fmt(val), el.x, el.y - 8);
+      });
+    });
+    ctx.restore();
+  }
+};
+
+// Same idea, independent on/off state, for the Service Type page's charts.
+let stShowDataLabels = false;
+const stDataLabelsPlugin = {
+  id: 'stDataLabels',
+  afterDatasetsDraw(chart){
+    if(!stShowDataLabels) return;
+    const ctx = chart.canvas.getContext('2d');
+    ctx.save();
+    ctx.font = "500 11px 'IBM Plex Mono', monospace";
+    ctx.fillStyle = '#CCCFFF';
+    ctx.textAlign = 'center';
+    chart.data.datasets.forEach((ds, di)=>{
+      const meta = chart.getDatasetMeta(di);
+      meta.data.forEach((el, i)=>{
+        const val = ds.data[i];
+        if(val === null || val === undefined) return;
+        ctx.fillText(stFmt(val), el.x, el.y - 8);
+      });
+    });
+    ctx.restore();
+  }
+};
+
+const chartBgPlugin = {
+  id: 'chartBg',
+  beforeDraw(chart){
+    const ctx = chart.canvas.getContext('2d');
+    ctx.save();
+    ctx.globalCompositeOperation = 'destination-over';
+    ctx.fillStyle = '#000F35';
+    ctx.fillRect(0, 0, chart.width, chart.height);
+    ctx.restore();
+  }
+};
+
+let barChart, lineChart;
+function renderBarChart(){
+  const i = selectedMonth;
+  document.getElementById('chartMonthLabel').textContent = monthShort[i];
+  const sorted = [...states].sort((a,b)=> a.localeCompare(b));
+  const data = sorted.map(s=>mwData[s][i]);
+
+  const ctx = document.getElementById('barChart');
+  if(barChart) barChart.destroy();
+  barChart = new Chart(ctx,{
+    type:'bar',
+    plugins:[chartBgPlugin, dataLabelsPlugin],
+    data:{
+      labels: sorted.map(s=>s.replace('IN_','')),
+      datasets:[{
+        data,
+        backgroundColor:'#700EEE',
+        borderRadius:4,
+        maxBarThickness:26
+      }]
+    },
+    options:{
+      responsive:true,
+      layout:{ padding:{ top: 22 } },
+      plugins:{ legend:{display:false},
+        tooltip:{ callbacks:{ label: c=> fmt(c.raw)+" MW" } } },
+      scales:{
+        x:{ grid:{display:false}, ticks:{ color:'#7E8C97', font:{family:'IBM Plex Mono',size:11} } },
+        y:{ grid:{color:'#1E2830'}, ticks:{ color:'#7E8C97', font:{family:'IBM Plex Mono',size:11} } }
+      }
+    }
+  });
+}
+
+function renderLineChart(){
+  const ctx = document.getElementById('lineChart');
+  if(lineChart) lineChart.destroy();
+  lineChart = new Chart(ctx,{
+    type:'line',
+    plugins:[chartBgPlugin, dataLabelsPlugin],
+    data:{
+      labels: monthShort,
+      datasets:[{
+        data: totalPerMonth,
+        borderColor:'#D0FF00',
+        backgroundColor:'rgba(208,255,0,0.10)',
+        fill:true,
+        tension:0.35,
+        pointBackgroundColor:'#D0FF00',
+        pointRadius:4,
+        borderWidth:2
+      }]
+    },
+    options:{
+      responsive:true,
+      layout:{ padding:{ top: 22 } },
+      plugins:{ legend:{display:false},
+        tooltip:{ callbacks:{ label: c=> fmt(c.raw)+" MW total" } } },
+      scales:{
+        x:{ grid:{display:false}, ticks:{ color:'#7E8C97', font:{family:'IBM Plex Mono',size:11} } },
+        y:{ grid:{color:'#1E2830'}, ticks:{ color:'#7E8C97', font:{family:'IBM Plex Mono',size:11} } }
+      }
+    }
+  });
+}
+
+function renderTable(){
+  const i = selectedMonth;
+  const totalMW = totalPerMonth[i];
+  const sorted = [...states].sort((a,b)=> a.localeCompare(b));
+  const rows = sorted.map(s=>{
+    const mw = mwData[s][i];
+    const pss = pssData[s][i];
+    const share = (mw/totalMW*100);
+    return `
+      <tr>
+        <td class="state">${s.replace('IN_','')}</td>
+        <td class="num">${fmt(mw)}</td>
+        <td>
+          <div class="bar-cell">
+            <div class="bar-track"><div class="bar-fill" style="width:${share.toFixed(1)}%"></div></div>
+            <span style="color:var(--muted);font-size:11.5px;width:38px;">${share.toFixed(1)}%</span>
+          </div>
+        </td>
+        <td class="num">${fmt(pss)}</td>
+        <td class="num">${(mw/pss).toFixed(1)}</td>
+      </tr>`;
+  }).join("");
+
+  const totalPSS = pssTotalPerMonth[i];
+  const totalRow = `
+    <tr class="total">
+      <td>Grand Total</td>
+      <td class="num">${fmt(totalMW)}</td>
+      <td></td>
+      <td class="num">${fmt(totalPSS)}</td>
+      <td class="num">${(totalMW/totalPSS).toFixed(1)}</td>
+    </tr>`;
+
+  document.getElementById('tableBody').innerHTML = rows + totalRow;
+}
+
+function renderAll(){
+  renderChips();
+  renderKpis();
+  renderBarChart();
+  renderLineChart();
+  renderTable();
+}
+
+renderAll(); // paint fallback immediately so the dashboard is never blank
+fetchLiveData();
+setInterval(fetchLiveData, AUTO_REFRESH_MS);
+/* ============================================================
+   DOWNLOAD MENUS — JPG / PDF / CSV, shared by both pages' charts
+   ============================================================ */
+function downloadImage(chart, filenameBase, ext){
+  if(!chart) return;
+  const mime = ext === 'jpg' ? 'image/jpeg' : 'image/png';
+  const link = document.createElement('a');
+  link.href = chart.toBase64Image(mime, 1);
+  link.download = filenameBase + '.' + ext;
+  document.body.appendChild(link); link.click(); document.body.removeChild(link);
+}
+
+function downloadPDF(chart, filenameBase){
+  if(!chart || !window.jspdf){ downloadImage(chart, filenameBase, 'png'); return; }
+  const { jsPDF } = window.jspdf;
+  const imgData = chart.toBase64Image('image/png', 1);
+  const w = chart.width, h = chart.height;
+  const doc = new jsPDF({ orientation: w>h ? 'landscape' : 'portrait', unit:'px', format:[w,h] });
+  doc.addImage(imgData, 'PNG', 0, 0, w, h);
+  doc.save(filenameBase + '.pdf');
+}
+
+function csvEscape(v){
+  const s = String(v===null||v===undefined ? '' : v);
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
+}
+function downloadCSV(rows, filenameBase){
+  const csv = rows.map(r => r.map(csvEscape).join(',')).join('\r\n');
+  const blob = new Blob([csv], { type:'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url; link.download = filenameBase + '.csv';
+  document.body.appendChild(link); link.click(); document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+// menuId: wrapping <div class="dl-menu">, getChart/getRows: functions called fresh at click time
+// so exports always reflect whatever month/metric is currently selected.
+function wireDownloadMenu(menuId, getChart, getRows, filenameBase){
+  const menu = document.getElementById(menuId);
+  if(!menu) return;
+  const btn = menu.querySelector('.dl-btn');
+  const dropdown = menu.querySelector('.dl-dropdown');
+  btn.addEventListener('click', (e)=>{
+    e.stopPropagation();
+    document.querySelectorAll('.dl-dropdown.open').forEach(d=>{ if(d!==dropdown) d.classList.remove('open'); });
+    dropdown.classList.toggle('open');
+  });
+  dropdown.querySelectorAll('.dl-opt').forEach(opt=>{
+    opt.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      dropdown.classList.remove('open');
+      const fmt = opt.dataset.fmt;
+      const name = typeof filenameBase === 'function' ? filenameBase() : filenameBase;
+      if(fmt === 'jpg') downloadImage(getChart(), name, 'jpg');
+      else if(fmt === 'pdf') downloadPDF(getChart(), name);
+      else if(fmt === 'csv') downloadCSV(getRows(), name);
+    });
+  });
+}
+document.addEventListener('click', ()=> document.querySelectorAll('.dl-dropdown.open').forEach(d=>d.classList.remove('open')));
+
+wireDownloadMenu('dlBarMenu',
+  ()=> barChart,
+  ()=> {
+    const i = selectedMonth;
+    const sorted = [...states].sort((a,b)=> a.localeCompare(b));
+    return [['State','MW'], ...sorted.map(s=>[s.replace('IN_',''), mwData[s][i]||0])];
+  },
+  ()=> 'capacity-by-state-' + (monthShort[selectedMonth]||'').replace(/\s+/g,'-')
+);
+
+wireDownloadMenu('dlLineMenu',
+  ()=> lineChart,
+  ()=> [['Month','Total MW'], ...months.map((m,idx)=>[monthShort[idx]||m, totalPerMonth[idx]||0])],
+  'capacity-trend-fy2026'
+);
+
+document.getElementById('refreshBtn').addEventListener('click', fetchLiveData);
+
+document.getElementById('toggleLabels').addEventListener('change', (e)=>{
+  showDataLabels = e.target.checked;
+  renderBarChart();
+  renderLineChart();
+});
+
+/* ============================================================
+   PAGE NAV — Portfolio vs F&S Service Type
+   ============================================================ */
+document.querySelectorAll('.page-nav button').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.page-nav button').forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('.app-page').forEach(p=>p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('page-' + btn.dataset.page).classList.add('active');
+  });
+});
+
+/* ============================================================
+   F&S SERVICE TYPE PAGE
+   Source: F&S_SERVICE_TYPE tab (published as TSV), two stacked
+   pivot structures — "SUM of MW" and a count-of-SS structure —
+   each broken out by State x FSP/QCA/TRIAL x Month.
+   Live-synced the same way the Portfolio page is, with the
+   original pasted snapshot kept as an offline fallback.
+   ============================================================ */
+const ST_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ_H5LpxOmSjETpEMB07NjmU4QOfEe07A_8P2F_KsKG4Q_cjoFXCzQJJ7_YILQ20h_AZnBvPOwG77bX/pub?gid=1013894629&single=true&output=tsv";
+const ST_AUTO_REFRESH_MS = 5 * 60 * 1000;
+const ST_COLORS = { FSP:'#2DD4BF', QCA:'#D0FF00', TRIAL:'#B00FFF' };
+
+// ---- offline fallback snapshot (from the pasted table) ----
+const ST_FALLBACK_MONTHS = ["March-2026","April-2026","May-2026","June-2026"];
+const ST_FALLBACK_MONTH_SHORT = ["Mar 2026","Apr 2026","May 2026","Jun 2026"];
+const ST_FALLBACK_MW = {
+  IN_AP: { FSP:[70,70,70,70],         QCA:[3054,3055,3055,3048.7], TRIAL:[531,531,531,531] },
+  IN_BR: { FSP:[null,null,null,null], QCA:[185,185,185,185],       TRIAL:[null,null,null,null] },
+  IN_CH: { FSP:[null,null,null,null], QCA:[180,180,180,180],       TRIAL:[null,null,null,null] },
+  IN_GJ: { FSP:[616,616,616,616],     QCA:[5373,5385,5516,5649],   TRIAL:[40,40,40,40] },
+  IN_HR: { FSP:[12,12,82,12],         QCA:[87,96,96,166],          TRIAL:[null,null,null,null] },
+  IN_KA: { FSP:[null,214,214,214],    QCA:[10126,10203,10503,10913], TRIAL:[null,null,null,null] },
+  IN_MH: { FSP:[200,272,279,279],     QCA:[3110,3152,3232,3253],   TRIAL:[null,null,null,null] },
+  IN_MP: { FSP:[null,null,null,null], QCA:[2114,2114,2214,2409],   TRIAL:[50,50,50,50] },
+  IN_OR: { FSP:[null,null,null,null], QCA:[31,31,46,46],           TRIAL:[null,null,null,null] },
+  IN_PB: { FSP:[null,null,null,null], QCA:[583,583,594,636],       TRIAL:[null,null,null,null] },
+  IN_RJ: { FSP:[400,400,550,550],     QCA:[5165,4770,4770,4035],   TRIAL:[560,560,560,560] },
+  IN_TG: { FSP:[6,6,6,6],             QCA:[980,980,980,980],       TRIAL:[null,null,null,null] },
+  IN_TN: { FSP:[177,177,177,181],     QCA:[5724,5901,5927,6097],   TRIAL:[224,224,224,224] },
+  IN_UP: { FSP:[175,175,175,175],     QCA:[1324,1324,1378,1383],   TRIAL:[50,50,50,50] },
+};
+const ST_FALLBACK_MW_GT = { FSP:[1656,1942,2169,2104], QCA:[38037,37960,38678,38980], TRIAL:[1455,1455,1455,1455] };
+
+// ---- live state (populated by stFetchLiveData(), falls back to the above) ----
+let ST_MONTHS = ST_FALLBACK_MONTHS;
+let ST_MONTH_SHORT = ST_FALLBACK_MONTH_SHORT;
+let ST_MW = ST_FALLBACK_MW;
+let ST_MW_GRAND_TOTAL = ST_FALLBACK_MW_GT;
+let ST_SS = null;             // count-of-SS structure — populated only if the sheet has it
+let ST_SS_GRAND_TOTAL = null;
+let ST_STATES = Object.keys(ST_MW);
+
+let stMetric = 'mw';        // 'mw' | 'ss'
+let stMonthIdx = ST_MONTHS.length - 1;
+let stStateChart, stTrendChart;
+
+function stFmt(n){ return n===null||n===undefined ? '—' : (Number.isInteger(n) ? n.toLocaleString('en-IN') : n.toLocaleString('en-IN',{maximumFractionDigits:1})); }
+
+function stCurrentData(){ return stMetric === 'mw' ? ST_MW : ST_SS; }
+function stCurrentGrandTotal(){ return stMetric === 'mw' ? ST_MW_GRAND_TOTAL : ST_SS_GRAND_TOTAL; }
+
+// ---- TSV parsing (tab-separated, one row per line) ----
+function parseTSV(text){
+  return text.replace(/\r/g,"").split("\n").map(line=>line.split("\t"));
+}
+
+// Parse every pivot block in the sheet: a block starts at a row whose first
+// cell reads like "SUM of MW" / "COUNTA of SS ID" / etc, followed by a
+// service-type header row (FSP / QCA / TRIAL, sparse — forward-filled across
+// blank cells) and a month header row, then one data row per state, ending
+// at a blank row or a "Grand Total" row (which is captured separately).
+function parsePivotBlocks(rows){
+  const blocks = [];
+  let i = 0;
+  while(i < rows.length){
+    const cell0 = (rows[i][0]||"").toString().trim();
+    if(/^(sum|counta|count|average|avg|max|min|no\.?|number|total)\s+of\s+/i.test(cell0)){
+      const headerRow1 = rows[i+1] || [];
+      const headerRow2 = rows[i+2] || [];
+
+      // Auto-detect which of the two header rows holds month labels (e.g. "March-2026"),
+      // since different tabs/tables can order Month vs Service Type either way.
+      const looksLikeMonth = (v) => /^[A-Za-z]{3,9}[\s\-]\d{4}$/.test((v||"").toString().trim());
+      const row1HasMonth = headerRow1.some(looksLikeMonth);
+      const row2HasMonth = headerRow2.some(looksLikeMonth);
+
+      let monthRow, serviceTypeRow;
+      if(row1HasMonth && !row2HasMonth){
+        monthRow = headerRow1; serviceTypeRow = headerRow2;
+      } else if(row2HasMonth && !row1HasMonth){
+        monthRow = headerRow2; serviceTypeRow = headerRow1;
+      } else {
+        // Ambiguous — fall back to the original assumption (ServiceType outer, Month inner)
+        serviceTypeRow = headerRow1; monthRow = headerRow2;
+      }
+
+      const maxCols = Math.max(serviceTypeRow.length, monthRow.length);
+      const colMeta = [];
+      let currentST = null, currentMonth = null;
+      for(let c=1; c<maxCols; c++){
+        const stVal = (serviceTypeRow[c]||"").toString().trim();
+        if(stVal) currentST = stVal;
+        const monthVal = (monthRow[c]||"").toString().trim();
+        if(monthVal) currentMonth = monthVal;
+        colMeta[c] = (currentST && currentMonth) ? { serviceType: currentST, month: currentMonth } : null;
+      }
+      const data = {};
+      const monthsByST = {};
+      let grandTotal = null;
+      let r = i+3;
+      while(r < rows.length){
+        const row = rows[r];
+        const label = (row[0]||"").toString().trim();
+        if(!label){ r++; break; }
+        const entry = {};
+        for(let c=1; c<row.length; c++){
+          const meta = colMeta[c];
+          if(!meta || !meta.serviceType) continue;
+          const raw = row[c];
+          const rawStr = (raw===undefined||raw===null) ? "" : raw.toString().trim();
+          let val;
+          if(rawStr === ""){ val = null; }
+          else { const n = parseFloat(rawStr.replace(/,/g,"")); val = isNaN(n) ? null : n; }
+          if(!entry[meta.serviceType]) entry[meta.serviceType] = {};
+          entry[meta.serviceType][meta.month] = val;
+          if(!monthsByST[meta.serviceType]) monthsByST[meta.serviceType] = [];
+          if(!monthsByST[meta.serviceType].includes(meta.month)) monthsByST[meta.serviceType].push(meta.month);
+        }
+        if(/grand total/i.test(label)){ grandTotal = entry; r++; break; }
+        data[label] = entry;
+        r++;
+      }
+      blocks.push({ title: cell0, monthsByST, data, grandTotal });
+      i = r;
+    } else {
+      i++;
+    }
+  }
+  return blocks;
+}
+
+// Convert a parsed block into { months, monthShort, data:{state->{FSP:[],QCA:[],TRIAL:[]}}, grandTotal:{FSP:[],QCA:[],TRIAL:[]} }
+function shapeBlock(block){
+  if(!block) return null;
+  const sts = ['FSP','QCA','TRIAL'].filter(st => block.monthsByST[st]);
+  const months = block.monthsByST[sts[0]] || [];
+  const monthShort = months.map(m=>{
+    const [name, yr] = m.split("-");
+    return (name||m).slice(0,3) + (yr ? " " + yr : "");
+  });
+  const data = {};
+  Object.keys(block.data).forEach(state=>{
+    const row = block.data[state];
+    data[state] = {};
+    sts.forEach(st=>{
+      const monthList = block.monthsByST[st] || months;
+      data[state][st] = monthList.map(m => (row[st] && row[st][m] !== undefined) ? row[st][m] : null);
+    });
+    // make sure every state has all three keys even if a service type is entirely absent for it
+    ['FSP','QCA','TRIAL'].forEach(st=>{ if(!data[state][st]) data[state][st] = months.map(()=>null); });
+  });
+  let grandTotal = null;
+  if(block.grandTotal){
+    grandTotal = {};
+    ['FSP','QCA','TRIAL'].forEach(st=>{
+      const monthList = block.monthsByST[st] || months;
+      grandTotal[st] = monthList.map(m => (block.grandTotal[st] && block.grandTotal[st][m] !== undefined) ? block.grandTotal[st][m] : 0);
+    });
+  }
+  return { months, monthShort, data, grandTotal };
+}
+
+function stSetLiveBadge(cls, text){
+  const badge = document.getElementById('stLiveBadge');
+  const label = document.getElementById('stLiveLabel');
+  if(!badge) return;
+  badge.className = 'live ' + cls;
+  label.textContent = text;
+}
+
+async function stFetchLiveData(){
+  stSetLiveBadge('', 'SYNCING…');
+  try{
+    const res = await fetch(ST_CSV_URL + (ST_CSV_URL.includes("?") ? "&" : "?") + "_cb=" + Date.now(), { cache: "no-store" });
+    if(!res.ok) throw new Error("HTTP " + res.status);
+    const text = await res.text();
+    const rows = parseTSV(text.trim());
+    const blocks = parsePivotBlocks(rows);
+    if(!blocks.length) throw new Error("Could not locate a pivot table on this tab");
+
+    const mwBlockRaw = blocks.find(b=>/mw/i.test(b.title)) || blocks[0];
+    const ssBlockRaw = blocks.find(b=> b!==mwBlockRaw && /(ss|station|substation)/i.test(b.title)) || blocks.find(b=>b!==mwBlockRaw) || null;
+
+    const mwShaped = shapeBlock(mwBlockRaw);
+    const ssShaped = shapeBlock(ssBlockRaw);
+
+    ST_MONTHS = mwShaped.months.length ? mwShaped.months : ST_FALLBACK_MONTHS;
+    ST_MONTH_SHORT = mwShaped.monthShort.length ? mwShaped.monthShort : ST_FALLBACK_MONTH_SHORT;
+    ST_MW = mwShaped.data;
+    ST_MW_GRAND_TOTAL = mwShaped.grandTotal || ST_FALLBACK_MW_GT;
+    ST_SS = ssShaped ? ssShaped.data : null;
+    ST_SS_GRAND_TOTAL = ssShaped ? ssShaped.grandTotal : null;
+    ST_STATES = Object.keys(ST_MW);
+    if(stMonthIdx > ST_MONTHS.length-1) stMonthIdx = ST_MONTHS.length-1;
+
+    stSetLiveBadge('', 'LIVE');
+    const asOf = document.getElementById('stAsOf');
+    if(asOf) asOf.textContent = 'last synced: ' + new Date().toLocaleTimeString();
+    stRenderAll();
+  }catch(err){
+    stSetLiveBadge('err', 'SYNC FAILED — showing snapshot');
+    const asOf = document.getElementById('stAsOf');
+    if(asOf) asOf.textContent = 'error: ' + err.message;
+    ST_MONTHS = ST_FALLBACK_MONTHS; ST_MONTH_SHORT = ST_FALLBACK_MONTH_SHORT;
+    ST_MW = ST_FALLBACK_MW; ST_MW_GRAND_TOTAL = ST_FALLBACK_MW_GT;
+    ST_SS = null; ST_SS_GRAND_TOTAL = null;
+    ST_STATES = Object.keys(ST_MW);
+    if(stMonthIdx > ST_MONTHS.length-1) stMonthIdx = ST_MONTHS.length-1;
+    stRenderAll();
+  }
+}
+
+function stRenderMonthChips(){
+  const el = document.getElementById('stMonthChips');
+  el.innerHTML = "";
+  ST_MONTHS.forEach((m,i)=>{
+    const chip = document.createElement('div');
+    chip.className = 'chip' + (i===stMonthIdx ? ' active' : '');
+    chip.textContent = ST_MONTH_SHORT[i];
+    chip.onclick = ()=>{ stMonthIdx = i; stRenderAll(); };
+    el.appendChild(chip);
+  });
+}
+
+function stRenderKpis(){
+  const row = document.getElementById('stKpiRow');
+  const data = stCurrentData();
+  if(!data){ row.innerHTML = ""; return; }
+  const i = stMonthIdx;
+  const fsp = ST_STATES.reduce((s,st)=> s+(data[st].FSP[i]||0),0);
+  const qca = ST_STATES.reduce((s,st)=> s+(data[st].QCA[i]||0),0);
+  const trial = ST_STATES.reduce((s,st)=> s+(data[st].TRIAL[i]||0),0);
+  const total = fsp+qca+trial;
+  const unit = stMetric === 'mw' ? 'MW' : 'nos';
+  const kpis = [
+    { label:'FSP', value: stFmt(fsp), color:ST_COLORS.FSP },
+    { label:'QCA', value: stFmt(qca), color:ST_COLORS.QCA },
+    { label:'TRIAL', value: stFmt(trial), color:ST_COLORS.TRIAL },
+    { label:'Grand Total', value: stFmt(total), color:'#CCCFFF' },
+  ];
+  row.innerHTML = kpis.map(k=>`
+    <div class="kpi">
+      <div class="label">${k.label}</div>
+      <div class="value" style="color:${k.color}">${k.value}<span>${unit}</span></div>
+    </div>
+  `).join("");
+}
+
+function stRenderStateChart(){
+  const data = stCurrentData();
+  const monthLabelEl = document.getElementById('stChartMonthLabel');
+  if(monthLabelEl) monthLabelEl.textContent = ST_MONTH_SHORT[stMonthIdx] || '';
+  if(!data){ if(stStateChart){ stStateChart.destroy(); stStateChart=null; } return; }
+  const i = stMonthIdx;
+  const sorted = [...ST_STATES].sort((a,b)=>{
+    const totA = (data[a].FSP[i]||0)+(data[a].QCA[i]||0)+(data[a].TRIAL[i]||0);
+    const totB = (data[b].FSP[i]||0)+(data[b].QCA[i]||0)+(data[b].TRIAL[i]||0);
+    return totB-totA;
+  });
+  const ctx = document.getElementById('stStateChart');
+  if(stStateChart) stStateChart.destroy();
+  stStateChart = new Chart(ctx, {
+    type:'bar',
+    plugins:[chartBgPlugin, stDataLabelsPlugin],
+    data:{
+      labels: sorted.map(s=>s.replace('IN_','')),
+      datasets:[
+        {label:'FSP', data:sorted.map(s=>data[s].FSP[i]||0), backgroundColor:ST_COLORS.FSP, stack:'s'},
+        {label:'QCA', data:sorted.map(s=>data[s].QCA[i]||0), backgroundColor:ST_COLORS.QCA, stack:'s'},
+        {label:'TRIAL', data:sorted.map(s=>data[s].TRIAL[i]||0), backgroundColor:ST_COLORS.TRIAL, stack:'s'},
+      ]
+    },
+    options:{
+      responsive:true,
+      layout:{ padding:{ top: 22 } },
+      plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label: c=> c.dataset.label+': '+stFmt(c.raw) } } },
+      scales:{
+        x:{ stacked:true, grid:{display:false}, ticks:{ color:'#7E8C97', font:{family:'IBM Plex Mono',size:11} } },
+        y:{ stacked:true, grid:{color:'#1E2830'}, ticks:{ color:'#7E8C97', font:{family:'IBM Plex Mono',size:11} } }
+      }
+    }
+  });
+}
+
+function stRenderTrendChart(){
+  const gt = stCurrentGrandTotal();
+  const ctx = document.getElementById('stTrendChart');
+  if(stTrendChart) stTrendChart.destroy();
+  if(!gt){ stTrendChart=null; return; }
+  stTrendChart = new Chart(ctx, {
+    type:'line',
+    plugins:[chartBgPlugin, stDataLabelsPlugin],
+    data:{
+      labels: ST_MONTH_SHORT,
+      datasets:[
+        {label:'FSP', data:gt.FSP, borderColor:ST_COLORS.FSP, backgroundColor:'transparent', tension:.3, yAxisID:'y1'},
+        {label:'TRIAL', data:gt.TRIAL, borderColor:ST_COLORS.TRIAL, backgroundColor:'transparent', tension:.3, yAxisID:'y1'},
+        {label:'QCA', data:gt.QCA, borderColor:ST_COLORS.QCA, backgroundColor:'transparent', tension:.3, yAxisID:'y2'},
+      ]
+    },
+    options:{
+      responsive:true,
+      layout:{ padding:{ top: 22 } },
+      plugins:{ legend:{position:'top', labels:{color:'#888DDD', boxWidth:9, boxHeight:9, font:{family:'IBM Plex Mono',size:11}}} },
+      scales:{
+        y1:{ position:'left', grid:{color:'#1E2830'}, ticks:{ color:'#7E8C97', font:{family:'IBM Plex Mono',size:11} } },
+        y2:{ position:'right', grid:{display:false}, ticks:{ color:'#7E8C97', font:{family:'IBM Plex Mono',size:11} } },
+        x:{ grid:{display:false}, ticks:{ color:'#7E8C97', font:{family:'IBM Plex Mono',size:11} } }
+      }
+    }
+  });
+}
+
+function stRenderTable(){
+  const data = stCurrentData();
+  const tableWrap = document.getElementById('stTableWrap');
+  const emptyPanel = document.getElementById('stEmptyPanel');
+  if(!data){ tableWrap.style.display='none'; emptyPanel.style.display='block'; return; }
+  tableWrap.style.display='block'; emptyPanel.style.display='none';
+  const i = stMonthIdx;
+  const sorted = [...ST_STATES].sort((a,b)=> a.localeCompare(b));
+  const rows = sorted.map(s=>{
+    const fsp = data[s].FSP[i], qca = data[s].QCA[i], trial = data[s].TRIAL[i];
+    const total = (fsp||0)+(qca||0)+(trial||0);
+    return `
+      <tr>
+        <td class="state">${s.replace('IN_','')}</td>
+        <td class="num" style="color:${ST_COLORS.FSP}">${stFmt(fsp)}</td>
+        <td class="num" style="color:${ST_COLORS.QCA}">${stFmt(qca)}</td>
+        <td class="num" style="color:${ST_COLORS.TRIAL}">${stFmt(trial)}</td>
+        <td class="num">${stFmt(total)}</td>
+      </tr>`;
+  }).join("");
+  const gt = stCurrentGrandTotal();
+  const totalRow = gt ? `
+    <tr class="total">
+      <td>Grand Total</td>
+      <td class="num" style="color:${ST_COLORS.FSP}">${stFmt(gt.FSP[i])}</td>
+      <td class="num" style="color:${ST_COLORS.QCA}">${stFmt(gt.QCA[i])}</td>
+      <td class="num" style="color:${ST_COLORS.TRIAL}">${stFmt(gt.TRIAL[i])}</td>
+      <td class="num">${stFmt((gt.FSP[i]||0)+(gt.QCA[i]||0)+(gt.TRIAL[i]||0))}</td>
+    </tr>` : '';
+  document.getElementById('stTableBody').innerHTML = rows + totalRow;
+}
+
+function stRenderAll(){
+  stRenderMonthChips();
+  stRenderKpis();
+  stRenderStateChart();
+  stRenderTrendChart();
+  stRenderTable();
+}
+stRenderAll(); // paint fallback immediately so the page is never blank
+stFetchLiveData();
+setInterval(stFetchLiveData, ST_AUTO_REFRESH_MS);
+const stRefreshBtn = document.getElementById('stRefreshBtn');
+if(stRefreshBtn) stRefreshBtn.addEventListener('click', stFetchLiveData);
+
+const stToggleLabels = document.getElementById('stToggleLabels');
+if(stToggleLabels) stToggleLabels.addEventListener('change', (e)=>{
+  stShowDataLabels = e.target.checked;
+  stRenderStateChart();
+  stRenderTrendChart();
+});
+
+wireDownloadMenu('dlStStateMenu',
+  ()=> stStateChart,
+  ()=> {
+    const data = stCurrentData();
+    const i = stMonthIdx;
+    const sorted = [...ST_STATES].sort((a,b)=> a.localeCompare(b));
+    return [
+      ['State','FSP','QCA','TRIAL','Total'],
+      ...sorted.map(s=>{
+        const fsp = data[s].FSP[i]||0, qca = data[s].QCA[i]||0, trial = data[s].TRIAL[i]||0;
+        return [s.replace('IN_',''), fsp, qca, trial, fsp+qca+trial];
+      })
+    ];
+  },
+  ()=> 'service-type-by-state-' + stMetric + '-' + (ST_MONTH_SHORT[stMonthIdx]||'').replace(/\s+/g,'-')
+);
+
+wireDownloadMenu('dlStTrendMenu',
+  ()=> stTrendChart,
+  ()=> {
+    const gt = stCurrentGrandTotal();
+    if(!gt) return [['Month','FSP','QCA','TRIAL']];
+    return [['Month','FSP','QCA','TRIAL'], ...ST_MONTH_SHORT.map((m,idx)=>[m, gt.FSP[idx]||0, gt.QCA[idx]||0, gt.TRIAL[idx]||0])];
+  },
+  ()=> 'service-type-trend-' + stMetric
+);
+
+document.querySelectorAll('#stMetricToggle button').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('#stMetricToggle button').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    stMetric = btn.dataset.metric;
+    stRenderAll();
+  });
+});
+</script>
+</body>
+</html>
